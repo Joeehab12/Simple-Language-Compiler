@@ -16,6 +16,9 @@
 %union{int val; char *id;}
 %start line
 %token type_int
+%token prefix_increment;
+%token postfix_increment;	
+%token colon;
 %token print_command
 %token type_float
 %token type_string
@@ -39,37 +42,39 @@
 %type <val> line expr term 
 %type <id> assignment
 
-
 %%
+
 line :	assignment ';' 					{;}
-	 | 	print_command expr ';'			{ printf("printing %d\n",$2);}
-	 | 	line print_command expr ';' 	{ printf("printing %d\n",$3);}
+	 | 	print_command expr ';'			{ printf("\nprinting %d\n",$2);}
+	 | 	line print_command expr ';' 	{ printf("\nprinting %d\n",$3);}
 	 |	line assignment ';' {;} 		
 ;
 
 assignment :  identifier '=' expr  {updateSymbol($1); updateSymbolVal($1,$3);}
 ;
+
 expr :	term 	    {$$ = $1;}
-	|	expr '+' term	{$$ = $1 + $3;}
-	|	expr '-' term	{$$ = $1 - $3;}
-	|	expr '*' term	{$$ = $1 * $3;}
-	|	expr '/' term	{$$ = $1 / $3;}
+	|	expr '+' expr	{$$ = $1 + $3;}
+	|	expr '-' expr	{$$ = $1 - $3;}
+	|	expr '*' expr	{$$ = $1 * $3;}
+	|	expr '/' expr	{$$ = $1 / $3;}
 	|   '(' expr ')'	{$$ = $2;}
-;
+	;
 
 term :  number			{$$ = $1;}
-	 | identifier		{ test(); $$ = symbolVal($1);}
+	 | identifier		{$$ = symbolVal($1); test();}
 ;
+
 
 %%
 
 void yyerror (char *s){
-	fprintf(stderr,"%s at line number: %d \n",s,yylineno);
+	fprintf(stderr,"\n%s at line number: %d \n",s,yylineno);
 }
 void test(){
 	int i;
 	for (i = 0 ;i<5;i++){
-		printf("symbol %d is %s \n",i,symbols[i]);
+		printf("\nsymbol %d is %s \n",i,symbols[i]);
 	}
 }
 
@@ -115,14 +120,14 @@ void updateSymbol(char *symbol){
 	for (i = 0; i<200;i++){
 		if (!strcmp(symbols[i],"\0")){
 			symbols[i]= symbol;
-			printf("symbol added\n");
+			printf("\nsymbol added\n");
 			break;		
 		}
 		else if (!strcmp(symbols[i],symbol)){
 			break;
 		}
 		else{
-			printf("symbol not added\n");
+			printf("\nsymbol not added\n");
 		}
 	}
 }
@@ -147,6 +152,7 @@ int computeSymbolIndex(char* symbol){
 void updateSymbolVal(char *symbol,int num){
 	int bucket = computeSymbolIndex(symbol);
 	values[bucket] = num;
-	printf("symbol is %s of value = %d\n",symbol,num);
+	printf("\nsymbol is %s of value = %d\n",symbol,num);
 }
+
 
