@@ -4,7 +4,6 @@
 	void yyerror();
 %}
 %%
-"const"									{printf("const ");/*return constant;*/}
 "void"									{printf("void ");/*return type_void;*/}
 "int"									{printf("int ");/*return type_int;*/}
 "float"									{printf("float ");/*return type_float;*/}
@@ -16,7 +15,6 @@
 "cin"									{printf("input ");/*return cin_command;*/}
 "cout"									{printf("print ");/*return cout_command;*/}
 "if"									{printf("if ");/*return if_statement;*/}
-"else if"								{printf("else if ");/*return else_if_statement;*/}
 "else"									{printf("else ");/*return else_statement;*/}
 "for"									{printf("for ");/*return for_loop;*/}
 "while"									{printf("while ");/*return while_loop;*/}
@@ -31,35 +29,16 @@
 [a-zA-Z_][a-zA-Z0-9_]*					{printf("identifier ");/*yylval.id = strdup(yytext); return identifier;*/}
 [a-zA-Z_][a-zA-Z0-9_]*[+][+]			{printf("postfix_increment "); /*return postfix_increment;*/}
 [+][+][a-zA-Z_][a-zA-Z0-9_]*			{printf("prefix_increment "); /*return prefix_increment;*/}
-[+-]?[0-9]+								{printf("integer ");/*yylval.val = atoi(yytext); return number;*/}
+([-+]?[1-9][0-9]*)|(0)					{printf("integer ");/*yylval.val = atoi(yytext); return number;*/}
 [0-9]+[.][0-9]+							{printf("float ");}
-"+"										{printf("plus ");}
-"-"										{printf("minus ");}
-"*"										{printf("multiply ");}
-"/"										{printf("divide ");}
-"%"										{printf("modulus ");}
-"^"										{printf("power ");}
-"="										{printf("assignment_equal ");}
-";"										{printf("semi-colon ");/*return semi-colon;*/}
-":"										{printf("colon ");/*return colon;*/}
-"'"										{printf("single_quotation ");}
-"\""									{printf("double_quotation ");}			
+[-+*/%^=<>(){}:;,.!?'"]					{ECHO;/*return *yytext;*/}
 "=="									{printf("logical_equal ");/*return equals_operator;*/}
-"<"										{printf("logical_smaller ");/*return smaller_operator;*/}
-">"										{printf("logical_greater ");/*return greater_operator;*/}
 "<="									{printf("logical_smaller_or_equal ");/*return smaller_or_equal_operator;*/}
 ">="									{printf("logical_greater_or_equal ");/*return greater_or_equal_operator;*/}
 "!="									{printf("logical_not_equal ");/*return equals_operator;*/}
 "&&"									{printf("and ");/*return and_operator;*/}
 "||"									{printf("or ");/*return or_operator;*/}
-"!"										{printf("not ");/*return not_operator;*/}
-"?"										{printf("conditional ");/*return conditional_operator;*/}
-","										{printf("comma ");/*return comma_operator;*/}
-"("										{printf("left_parenthesis ");}
-")"										{printf("right_parenthesis ");}
-"{"										{printf("left_curly ");/*return left_curly;*/}
-"}"										{printf("right_curly ");/*return right_curly;*/}
-[ \t\n]									{}
+[ \t\n]+								{;}
 .    									{yyerror();}
 
 %%
