@@ -13,7 +13,8 @@
 "true"									{printf("true ");/*return true_case;*/}
 "false"									{printf("false ");/*return false_case;*/}
 
-[-+*/%^!=<>(){};]						{ECHO;/*return *yytext;*/}
+[-+*/%!=<>(){};]						{ECHO;/*return *yytext;*/}
+[\^]								{ECHO;/*return *yytext;*/}
 "=="									{printf("logical_equal ");/*return equals_operator;*/}
 "<="									{printf("logical_smaller_or_equal ");/*return smaller_or_equal_operator;*/}
 ">="									{printf("logical_greater_or_equal ");/*return greater_or_equal_operator;*/}
