@@ -7,13 +7,12 @@
 "void"									{printf("void ");/*return type_void;*/}
 "int"									{printf("type_integer ");/*return type_int;*/}
 "float"									{printf("type_float ");/*return type_float;*/}
-"string"								{printf("type_string ");/*return type_string;*/}
 "char"									{printf("type_char ");/*return type_char;*/}
 "bool"									{printf("type_boolean ");/*return type_bool;*/}
 "true"									{printf("true ");/*return true_case;*/}
 "false"									{printf("false ");/*return false_case;*/}
-[-+*/%!=<>(){};]						{ECHO;printf(" ");/*return *yytext;*/}
-[\^]								{ECHO;printf(" ");/*return *yytext;*/}
+
+[-+*/%^!=<>(){};]						{ECHO;printf(" ");/*return *yytext;*/}
 "=="									{printf("logical_equal ");/*return equals_operator;*/}
 "<="									{printf("logical_smaller_or_equal ");/*return smaller_or_equal_operator;*/}
 ">="									{printf("logical_greater_or_equal ");/*return greater_or_equal_operator;*/}
@@ -33,8 +32,7 @@
 
 [a-zA-Z][a-zA-Z0-9]*					{printf("identifier ");/*yylval.id = strdup(yytext); return identifier;*/}
 ([-]?[1-9][0-9]*)|(0)					{printf("constant_integer ");/*yylval.val = atoi(yytext); return integer;*/}
-[0-9]+[.][0-9]+							{printf("constant_float ");/*yylval.val = atof(yytext); return float;*/}
-\"[^ \t\n]*\"							{printf("string ");/*yylval = strdup(yytext+1); return string;*/}
+(0|[1-9][0-9]*)[.][0-9]+							{printf("constant_float ");/*yylval.val = atof(yytext); return float;*/}
 \'[^ \t\n]\'							{printf("char ");/*yylval = strdup(yytext+1); return char;*/}
 
 [ \t\n]+								;
