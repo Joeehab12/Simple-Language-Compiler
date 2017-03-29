@@ -32,6 +32,8 @@
 %token cout_command;
 %token postfix_increment
 %token prefix_increment
+%token postfix_decrement
+%token prefix_decrement
 %token if_statement
 %token else_statement
 %token for_loop
@@ -89,6 +91,10 @@ expr :	term 	    {$$ = $1;}
 	|	expr '^' expr		{$$ = opr('^',2,$1,$3);}	
 	|	expr '%' expr	{$$ = opr('%',2,$1,$3);}
 	|   '(' expr ')'	{$$ = $2;}
+	|	expr '++' {$$ = opr('+',2,$1,1);}
+	|	expr '--' {$$ = opr('-',2,$1,1);}
+	|	'++' expr {$$ = opr('+',2,$1,1);}
+	|	'--' expr {$$ = opr('-',2,$1,1);}
 	;
 
 term :  integer			{$$ = con($1);}
