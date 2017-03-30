@@ -98,7 +98,7 @@ expr :	term 	    {$$ = $1;}
 	;
 
 term :  integer			{$$ = con($1);}
-	 | identifier		{$$ = id($1);/*$$ = symbolVal($1); test();*/}
+	 |	identifier		{$$ = id($1);/*$$ = symbolVal($1); test();*/}
 ;
 
 
@@ -297,6 +297,10 @@ int ex(nodeType *p) {
             case smaller_or_equal_operator:    fprintf(fp,"\tcompLE\n"); break;
             case not_equal_operator:    fprintf(fp,"\tcompNE\n"); break;
             case equals_operator:    fprintf(fp,"\tcompEQ\n"); break;
+            case postfix_increment: fprintf(fp,"\tinc\n"); break;
+            case prefix_increment: fprintf(fp,"\tinc\n"); break;
+            case postfix_decrement: fprintf(fp,"\tdec\n"); break;
+            case prefix_decrement: fprintf(fp,"\tdec\n"); break;
             }
         }
     }
