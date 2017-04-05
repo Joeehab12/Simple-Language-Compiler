@@ -18,8 +18,6 @@
 [-+*/%^!=<>(){};]							{return *yytext;}
 [a-zA-Z_][a-zA-Z0-9_]*[+][+]			{return postfix_increment;}
 [+][+][a-zA-Z_][a-zA-Z0-9_]*			{return prefix_increment;}
-[a-zA-Z_][a-zA-Z0-9_]*[-][-]			{return postfix_decrement;}
-[-][-][a-zA-Z_][a-zA-Z0-9_]*			{return prefix_decrement;}
 "=="									{return equals_operator;}
 "<="									{return smaller_or_equal_operator;}
 ">="									{return greater_or_equal_operator;}
