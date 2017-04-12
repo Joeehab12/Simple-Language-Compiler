@@ -7,7 +7,7 @@
 %}
 %%
 "void"									{return type_void;}
-"int"									{return type_int;}
+"int"									{yylval.type = strdup(yytext); return type_int;}
 "float"									{return type_float;}
 "char"									{return type_char;}
 "bool"									{return type_bool;}
@@ -15,7 +15,7 @@
 "false"									{return false_case;}
 "cout"									{return cout_command;}
 "<<"									{return left_shift;}
-[-+*/%^!=<>(){};]							{return *yytext;}
+[-+*/%^!=<>(){}:;]							{return *yytext;}
 [a-zA-Z_][a-zA-Z0-9_]*[+][+]			{return postfix_increment;}
 [+][+][a-zA-Z_][a-zA-Z0-9_]*			{return prefix_increment;}
 "=="									{return equals_operator;}
@@ -34,7 +34,7 @@
 "case"									{return case_statement;}
 "default"								{return default_command; 	}
 "return"								{return return_command;}
-
+"break"									{return break_command;}
 [a-zA-Z][a-zA-Z0-9]*					{yylval.id = strdup(yytext); return identifier;}
 ([-]?[1-9][0-9]*)|(0)					{yylval.ival = atoi(yytext); return integer;}
 (0|[1-9][0-9]*)[.][0-9]+							{yylval.fval = atof(yytext); return float_number;}
