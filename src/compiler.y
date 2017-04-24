@@ -104,6 +104,9 @@ line :';'								{;}
 	 |  if_statement '(' logex ')' '{' line_list '}' {$$ = opr(if_statement,2,$3,$6); logex_flag = 1; conditionFlag = 1; }
 	 |	if_statement '(' logex ')' '{' line_list '}' else_statement '{' line_list '}' {$$ = opr(if_statement,3,$3,$6,$10); conditionFlag = 1; }
 	 | 	switch_statement '(' identifier ')' '{' block '}'			{ $$ = opr(switch_statement,2,id($3),$6); $$->caseNum = 0;}
+	 |  while_loop '(' logex ')' '{' line_list '}'     { $$ = opr(while_loop, 2, $3, $6); logex_flag = 1; conditionFlag = 1; }
+	 |  do_statement '{' line_list '}' while_loop '(' logex ')' { $$ = opr(do_statement, 2, $3, $7); logex_flag = 1; conditionFlag = 1; }
+	 |  for_loop '(' assignment ';' logex ';' expr ')' '{' line_list '}' { $$ = opr(for_loop, 4, $3, $5, $7, $10); logex_flag = 1; conditionFlag = 1; }
 ;
 
 block:     case_list defaultstmt					{$$ = opr(';',2,$1,$2);}
@@ -488,6 +491,62 @@ void freeNode(nodeType *p) {
             fprintf(yyout,"L%03d:\n", default_lbl);
             ex(p->opr.op[0]);
             break;
+
+            case while_loop:
+            /*printf("L%03d:\n", lbl1 = lbl++);
+            ex(p->opr.op[0]);
+            printf("\tjz\tL%03d\n", lbl2 = lbl++);
+            ex(p->opr.op[1]);
+            printf("\tjmp\tL%03d\n", lbl1);
+            printf("L%03d:\n", lbl2);*/
+
+            /*Please check if this is right =)*/	
+            lbl1 = lbl++;
+            lbl2 = lbl++;
+            fprintf(yyout,"\tjmp\tL%03d\n", lbl1);
+            fprintf("L%03d:\n", lbl2);
+            ex(p->opr.op[1]);
+            fprintf(yyout,"L%03d:\n", lbl1);
+            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+            ex(p->opr.op[0]);
+            fprintf(yyout,"\tjz\tL%03d\n", lbl2);
+            break;
+
+
+
+            case do_statement:
+            fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[1]->registerNumber, p->opr.op[1]->con.value);
+            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
+            ex(p->opr.op[0]);
+            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+            ex(p->opr.op[1]);
+            fprintf(yyout,"\tjz\tL%03d\n", lbl1);
+            break;
+
+
+
+            case for_loop:
+            fprintf(yyout,"xor R%03d \t , R%03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->registerNumber);
+            ex(p->opr.op[0]);
+            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
+            ex(p->opr.op[3]);
+            fprintf(yyout,"inc R%03d \t\n",p->opr.op[0]->registerNumber)
+            ex(p->opr.op[2]);
+            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+            ex(p->opr.op[1]);
+            fprintf(yyout,"\tjle\tL%03d\n", lbl1);
+
+            /*Another logic I found:
+            fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+            ex(p->opr.op[0]);
+            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
+            ex(p->opr.op[3]);
+            fprintf(yyout,"loop L%03d:\n", lbl1);
+            ex(p->opr.op[2]);
+            ex(p->opr.op[1]);*/
+            break;
+
+
         default:
         	
             if (p->opr.oper == '>' || p->opr.oper == '<' || p->opr.oper == equals_operator || p->opr.oper == not_equal_operator || p->opr.oper == smaller_or_equal_operator
@@ -509,15 +568,15 @@ void freeNode(nodeType *p) {
 			break;
             case '-':  
             fprintf(yyout,"sub R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
+            break;
 			case '*':
 			fprintf(yyout,"mul R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
             break;
             case '/':
             fprintf(yyout,"div R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);	
-             break;
+            break;
 
             case '<':   
-
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
@@ -528,8 +587,6 @@ void freeNode(nodeType *p) {
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"jb L%03d\n",conditionlbl = lbl++);
-
-
             			break;
             case '>':   
             			if (p->opr.op[1]->type == typeCon){
@@ -542,7 +599,6 @@ void freeNode(nodeType *p) {
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"ja L%03d\n",conditionlbl = lbl++);
-            			
             			break;
             case greater_or_equal_operator:   
             			if (p->opr.op[1]->type == typeCon){
