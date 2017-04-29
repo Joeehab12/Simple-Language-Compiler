@@ -9,24 +9,34 @@
 	extern int yylex();
 	extern int yylineno;
 	extern char* yytext;
+    int syntax_flag = 0;
 	nodeType *opr(int oper , int nops, ...);
 	nodeType *id(char* id_name);
 	nodeType *con(int value);
 	void freeNode(nodeType *p);
+    //void initCheck(char* symbol);
+    char* getType(char* symbol);
+    void setType(char* symbol,char *type);
+    void declaredCheck(char* symbol);
+    void checkUsed();
 	int computeSymbolIndex(char* symbol);
 	int symbolVal(char* symbol);
 	void updateSymbol(char *symbol);
 	void updateSymbolVal(char *symbol,int num);
 	void symbol_init();
 	void printSymbolTable();
-	int ex(nodeType *p);
+	int ex(nodeType *p,int label);
 	char* symbols[200];
 	int values[200];
+    int used[200];
+    int init[200];
+    char* types[200];
 	char* filename;
 	int registerNumbers[200];
     extern FILE* yyin;
     extern FILE* yyout;
     int count = 0;
+    int forcnt = 0;
     int idcount = 0;
     int regcount = 0;
     int lastRegNum = 0;
@@ -43,15 +53,20 @@
   	int op2RegNum = 0;
   	char *err;
     static int lastlbl = 0;
+    int *lblarr;
+    int lblindex = 0;
+    int switchcnt = 0;
+    int conditionRegister = 0;
 %}
+%error-verbose
 
 %union{int ival; char *id; char* type; char c; float fval; nodeType* nPtr;};
 
 %token type_void
-%token <id>type_int
-%token type_float
-%token type_char
-%token type_bool
+%token <type>type_int
+%token <type>type_float
+%token <type>type_char
+%token <type>type_bool
 %token left_shift
 %token <val>true_case
 %token <val>false_case
@@ -82,38 +97,40 @@
 %token or_operator
 %token return_command;		
 %type <nPtr> line expr term line_list
-%type <nPtr> assignment declaration logex casestmt block case_list defaultstmt 
+%type <nPtr> assignment declaration logex casestmt case_list  condition
 %left '+' '-'
 %left '*' '/'
-%left greater_or_equal_operator smaller_or_equal_operator equals_operator not_equal_operator '>' '<' and_operator or_operator '!'
+%left greater_or_equal_operator smaller_or_equal_operator equals_operator not_equal_operator '>' '<' and_operator or_operator '!' 
 %nonassoc uminus
 
 %%
-program:	function					{printSymbolTable(); exit(0);}
+program:	function					{if (!syntax_flag){checkUsed();} printSymbolTable(); exit(0);}
 ;
 
-function:	function line 						{ ex($2);	freeNode($2);}
+function:	function line 						{ ex($2,0);	freeNode($2);}
+        |   function error   "\n"                      { syntax_flag=1; yyerrok;}
 |
 ;
 
 line :';'								{;}
 	 | declaration ';'					{$$->declarationFlag = 1;}
 	 |	assignment ';' 					{;}
-	 |  expr ';'						{;}
+	 // |  expr ';'						{;}
+	 |  logex ';'						{;}
 	 | 	cout_command left_shift expr ';'			{ $$ = opr(cout_command,1,$3);}
 	 |  if_statement '(' logex ')' '{' line_list '}' {$$ = opr(if_statement,2,$3,$6); logex_flag = 1; conditionFlag = 1; }
 	 |	if_statement '(' logex ')' '{' line_list '}' else_statement '{' line_list '}' {$$ = opr(if_statement,3,$3,$6,$10); conditionFlag = 1; }
-	 | 	switch_statement '(' identifier ')' '{' block '}'			{ $$ = opr(switch_statement,2,id($3),$6); $$->caseNum = 0;}
-	 |  while_loop '(' logex ')' '{' line_list '}'     { $$ = opr(while_loop, 2, $3, $6); logex_flag = 1; conditionFlag = 1; }
-	 |  do_statement '{' line_list '}' while_loop '(' logex ')' { $$ = opr(do_statement, 2, $3, $7); logex_flag = 1; conditionFlag = 1; }
-	 |  for_loop '(' assignment ';' logex ';' expr ')' '{' line_list '}' { $$ = opr(for_loop, 4, $3, $5, $7, $10); logex_flag = 1; conditionFlag = 1; }
+	 | 	switch_statement '(' identifier ')' '{' case_list   default_command ':' line_list  break_command ';''}'			{ switchcnt++; $$ = opr(switch_statement,3,id($3),$6,$9); used[computeSymbolIndex($3)] = 1;}
+     |  while_loop '(' logex ')' '{' line_list '}'     { $$ = opr(while_loop, 2, $3, $6); logex_flag = 1; conditionFlag = 0; }
+     |  do_statement '{' line_list '}' while_loop '(' logex ')' { $$ = opr(do_statement, 2, $3, $7); logex_flag = 1; conditionFlag = 0; }
+     |  for_loop '(' assignment ';' logex ';' assignment ')' '{' line_list '}' { forcnt++; $$ = opr(for_loop, 4, $3, $5, $7, $10); logex_flag = 1; conditionFlag = 0; }
+    //  | error ';'            {yyclearin; /* discard lookahead */printf("error!\n"); yyerrok;}
+    // | error '}'            {yyclearin; /* discard lookahead */ yyerrok;}
 ;
 
-block:     case_list defaultstmt					{$$ = opr(';',2,$1,$2);}
-;
 
-defaultstmt: default_command ':' line_list	break_command ';'					{$$ = opr(default_command,1,$3); lastlbl++;}
-;
+/*defaultstmt: default_command ':' line_list	break_command ';'					{$$ = opr(default_command,1,$3); lastlbl++;}
+;*/
 
 casestmt:  case_statement integer ':' line_list break_command ';'	{ $$ = opr(case_statement,2,con($2),$4);lastlbl+=2;}
 ;
@@ -122,10 +139,14 @@ case_list: casestmt 								{;}
 		 |case_list casestmt 						{$$ = opr(';',2,$1,$2);}
 ;
 
-logex : term			{$$ = $1; conditionFlag = 1;}
-	  | expr and_operator expr {$$ = opr(and_operator,2,$1,$3); conditionFlag = 1;  }
-	  | expr or_operator expr {$$ = opr(or_operator,2,$1,$3); conditionFlag = 1;}
-	  | expr not_equal_operator expr {$$ = opr(not_equal_operator,2,$1,$3); conditionFlag = 1;}
+
+condition: logex and_operator logex {$$ = opr(and_operator,2,$1,$3); conditionFlag = 1;  }
+	  | logex or_operator logex {$$ = opr(or_operator,2,$1,$3); conditionFlag = 1;}
+	  | logex not_equal_operator logex {$$ = opr(not_equal_operator,2,$1,$3); conditionFlag = 1;}
+;
+
+logex : term			{/*conditionFlag = 1;*/$$=$1;}
+	  | condition   	{;}
 	  | '!' logex					 {$$ = opr('!',1,$2);  conditionFlag = 1;}
 	  | expr equals_operator expr 	 {$$ = opr(equals_operator,2,$1,$3); conditionFlag = 1;}
 	  | expr '>' expr	 {$$ = opr('>',2,$1,$3); conditionFlag = 1;}
@@ -136,17 +157,17 @@ logex : term			{$$ = $1; conditionFlag = 1;}
 
 
 
-line_list : line {;} 
+line_list : line {$$ = $1;} 
 			| line_list line {$$ = opr(';',2,$1,$2);}
 ;
 
-declaration:  type_int identifier {$$ = id($2); updateSymbol($2);}
-			| type_char identifier{$$ = id($2); updateSymbol($2);}
-			| type_bool identifier{$$ = id($2); updateSymbol($2);}
-			| type_float identifier{$$ = id($2); updateSymbol($2);}
+declaration:  type_int identifier {$$ = id($2); updateSymbol($2);  setType($2,$1); }
+			| type_float identifier{$$ = id($2); updateSymbol($2); setType($2,$1); }
+            | type_char identifier{$$ = id($2); updateSymbol($2); setType($2,$1);}
+            | type_bool identifier{$$ = id($2); updateSymbol($2); setType($2,$1);}
 ;
-assignment :  identifier '=' expr  		{$$ = opr('=',2,id($1),$3); }
-		   |  declaration '=' expr		{$$ = opr('=',2,$1,$3); $1->declarationFlag = 1; }
+assignment :  identifier '=' expr  		{$$ = opr('=',2,id($1),$3);  init[computeSymbolIndex($1)] = 1; if (!syntax_flag){declaredCheck($1);}  used[computeSymbolIndex($1)] = 1; }
+		   |  declaration '=' expr		{$$ = opr('=',2,$1,$3); $1->declarationFlag = 1; init[computeSymbolIndex($1->id.id_name)] = 1; }
 ;
 
 expr :	term 	    {$$=$1; $$->declarationFlag = 0;}
@@ -157,8 +178,8 @@ expr :	term 	    {$$=$1; $$->declarationFlag = 0;}
 	|   '(' expr ')'	{$$ = $2; }
 	;
 
-term :  integer			{equal_flag = 1; $$ = con($1); }
-	 | identifier		{equal_flag = 1; $$ = id($1);  }
+term :  integer			{equal_flag = 1; $$ = con($1);  }
+	 | identifier		{equal_flag = 1;  $$ = id($1); used[computeSymbolIndex($1)] = 1; if (!syntax_flag){declaredCheck($1);} }
 ;
 
 
@@ -181,7 +202,7 @@ int main(void){
    return 0;
 }
 void yyerror(const char *msg){
-	fprintf(stderr,"%s:%d: %s",filename,yylineno,msg);
+	fprintf(stderr,"%s:%d: %s\n",filename,yylineno,msg);
 }
 
 void printSymbolTable(){
@@ -197,6 +218,9 @@ void symbol_init(){
 	for(i = 0;i<200;i++){
 		symbols[i] = "\0";
 		values[i] = 0;
+        used[i] = 0;
+        types[i] = "\0";
+        init[i] = 0;
 		registerNumbers[i] = 0;
 	}
 }
@@ -240,7 +264,59 @@ int computeSymbolIndex(char* symbol){
 	}
 	return index;
 }
-
+/*void initCheck(char* symbol){
+    if (!init[computeSymbolIndex(symbol)]){
+        char* msg = malloc(200*sizeof(char));
+        strcpy(msg,"variable '");
+        strcat(msg,symbol);
+        strcat(msg,"' is used without being initialized");
+        yyerror(msg);
+    }
+}*/
+void declaredCheck(char* symbol){
+    int found = 0;
+    int i;
+    for (i = 0; i<200;i++){
+        if (!strcmp(symbols[i],symbol)){
+            found = 1;
+            break;  
+        }
+    }
+    if (!found){
+        char* msg = malloc(200*sizeof(char));
+        strcpy(msg,"variable '");
+        strcat(msg,symbol);
+        strcat(msg,"' is used without being declared");
+        yyerror(msg);
+    }
+    else{
+        if (!init[computeSymbolIndex(symbol)]){
+        char* msg = malloc(200*sizeof(char));
+        strcpy(msg,"variable '");
+        strcat(msg,symbol);
+        strcat(msg,"' is used without being initialized");
+        yyerror(msg);
+    }
+    }
+}
+char* getType(char * symbol){
+    return types[computeSymbolIndex(symbol)];
+}
+void setType(char* symbol,char *type){
+    types[computeSymbolIndex(symbol)]=type;
+}
+void checkUsed(){
+    int i;
+    for (i = 0;i<200;i++){
+        if (!used[computeSymbolIndex(symbols[i])] && strcmp(symbols[i],"\0")){
+            char* msg = malloc(200*sizeof(char));
+            strcpy(msg,"variable '");
+            strcat(msg,symbols[i]);
+            strcat(msg,"' is unused");
+            yyerror(msg);
+        }
+    }
+}
 void updateSymbolVal(char *symbol,int num){
 	int bucket = computeSymbolIndex(symbol);
 	values[bucket] = num;
@@ -319,7 +395,7 @@ nodeType *opr(int oper, int nops, ...) {
 void freeNode(nodeType *p) {
     int i;
 
-    if (!p) return;
+    if (!p){return;}
     if (p->type == typeOpr) {
         for (i = 0; i < p->opr.nops; i++)
             freeNode(p->opr.op[i]);
@@ -332,13 +408,14 @@ void freeNode(nodeType *p) {
   char* switch_var;
   int conditionlbl;
   char* symbol_id;
-  int ex(nodeType *p) {
-    // printf("ex (): type = %d condition_flag = %d opr_flag = %d\n",p->type,conditionFlag,opr_flag);
-    int lbl1, lbl2;
+  int ex(nodeType *p, int label ) {
+
+     printf("ex (): ");
+    int lbl1, lbl2,whilelbl,switchlbl,forlbl,dowhilelbl;
     int x;
     int flag11;	
-    if (!p) return 0;
-    
+    if (!p){printf("no p\n");return 0;} 
+    lblarr = malloc(200*sizeof(int));
     switch(p->type) {
     case typeCon:
     	//p->con.registerNumber++;
@@ -403,7 +480,7 @@ void freeNode(nodeType *p) {
 
     		int sym_index = computeSymbolIndex(p->id.id_name);
     		symbol_id = symbols[sym_index];
-    		decRegNum = registerNumbers[sym_index];
+    		d ecRegNum = registerNumbers[sym_index];
     		//fprintf(yyout,"mov %s,%s\n",symbol_id, p->id.id_flag);
     	}
     	*/
@@ -418,9 +495,29 @@ void freeNode(nodeType *p) {
             break;
         case '=':
         		id_flag = 1;
-        		ex(p->opr.op[0]);
-        		ex(p->opr.op[1]);
-        		int sym_index = computeSymbolIndex((p->opr.op[0])->id.id_name);
+                        printf("test1.3\n");
+                if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                    if(types[computeSymbolIndex(p->opr.op[0]->id.id_name)] != types[computeSymbolIndex(p->opr.op[1]->id.id_name)]){  
+                        char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        char * type2 = malloc (50*sizeof(char));
+                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
+                        strcpy(msg,"type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and variable '");
+                        strcat(msg,p->opr.op[1]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type2);
+                        strcat(msg,")\n");
+                        yyerror(msg);
+                    }
+                }
+
+        		ex(p->opr.op[0],0);
+        		ex(p->opr.op[1],0);        		int sym_index = computeSymbolIndex((p->opr.op[0])->id.id_name);
         		if(p->opr.op[1]->type == typeOpr){
         			fprintf(yyout,"mov %s,R%d\n",symbols[sym_index], lastRegNum/*p->id.id_name*/); 
         		}
@@ -439,11 +536,10 @@ void freeNode(nodeType *p) {
               break;
 
         case uminus:    
-            ex(p->opr.op[0]);
-            fprintf(yyout,"\tneg\n");
+            ex(p->opr.op[0],0);            fprintf(yyout,"\tneg\n");
             break;
             case if_statement:
-            ex(p->opr.op[0]);
+            ex(p->opr.op[0],0);
             if (p->opr.nops > 2) {
                 /* if else */
                
@@ -453,97 +549,131 @@ void freeNode(nodeType *p) {
                 int t = conditionlbl;
                 op1RegNum = ((p->opr.op[0])->opr.op[0])->registerNumber;
             	op2RegNum = ((p->opr.op[0])->opr.op[1])->registerNumber;
-                ex(p->opr.op[2]);
-                fprintf(yyout,"jmp\tL%03d\n", lbl2 = lbl++);
+                ex(p->opr.op[2],0);                fprintf(yyout,"jmp\tL%03d\n", lbl2 = lbl++);
                 fprintf(yyout,"L%03d:\n", t);
-                ex(p->opr.op[1]);
-                fprintf(yyout,"L%03d:\n", lbl2);
+                ex(p->opr.op[1],0);                fprintf(yyout,"L%03d:\n", lbl2);
             } 
             else {
-                /* if */
+                /* if */ 
                 op1RegNum = ((p->opr.op[0])->opr.op[0])->registerNumber;
             	op2RegNum = ((p->opr.op[0])->opr.op[1])->registerNumber;
-                fprintf(yyout,"jmp\tL%03d\n", lbl2 = lbl++);
-                fprintf(yyout,"L%03d:\n", conditionlbl);
-                ex(p->opr.op[1]);
+            	fprintf(yyout,"cmp R%d,1\n", lastRegNum);
+            	fprintf(yyout,"jz L%03d\n", lbl1 = lbl++);  
+                fprintf(yyout,"jmp\tL%03d\n", lbl2 = lbl++); 
+                fprintf(yyout,"L%03d:\n", lbl1);
+                ex(p->opr.op[1],0);                //fprintf(yyout,"L%03d:\n", lbl2);
                 fprintf(yyout,"L%03d:\n", lbl2);
+                /*int x = 0;
+                while(x<=lblindex){
+                	fprintf(yyout,"L%03d:\n",lblarr[x],0);                	x++;
+                }*/
+                            
             }
             break;
             case switch_statement:
+            switchlbl = switchcnt--;
             switch_var = p->opr.op[0]->id.id_name;
             conditionFlag = 1;
-            ex(p->opr.op[0]);
-            ex(p->opr.op[1]);
-            fprintf(yyout,"L%03d:\n", lastlbl);
+            ex(p->opr.op[0],0);            ex(p->opr.op[1],switchlbl);            printf("test1\n");
+            ex(p->opr.op[2],0);
+            fprintf(yyout,"switchlbl%d:\n", switchlbl); 
  			break;          
             case case_statement:
             conditionFlag = 1;
+
            // fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
-            ex(p->opr.op[0]);   
+            ex(p->opr.op[0],0);           // fprintf(yyout,"L%03d:\n", lastlbl); 
             fprintf(yyout,"cmp %s,%d\n",switch_var,(p->opr.op[0])->con.value);
+
             fprintf(yyout,"jz\tL%03d\n", lbl1 = lbl++);
-            fprintf(yyout,"jmp L%03d\n", lbl1+1); default_lbl = lbl1+1;
+            lbl2 = lbl;
+            fprintf(yyout,"jmp L%03d\n", lbl++); //default_lbl = lbl1+1;
             fprintf(yyout,"L%03d:\n", lbl1);
-            ex(p->opr.op[1]);
-            fprintf(yyout,"jmp L%03d\n", lastlbl);
+            ex(p->opr.op[1],0);         
+            fprintf(yyout,"jmp switchlbl%d\n", label);
+            fprintf(yyout,"L%03d:\n", lbl2);
             break;
             case default_command:
-            fprintf(yyout,"L%03d:\n", default_lbl);
-            ex(p->opr.op[0]);
-            break;
+            //fprintf(yyout,"L%03d:\n", default_lbl);
+            conditionFlag = 0;
+            id_flag = 0;
+            printf("test\n");
+            ex(p->opr.op[0],0);            break;
+            /*case and_operator:
+            
+            ex(p->opr.op[0],0);            int t = conditionlbl+1;
+            fprintf(yyout,"jmp L%03d\n", t); lblarr[lblindex++] = t; 
 
+
+
+            fprintf(yyout,"L%03d:\n", conditionlbl);
+            ex(p->opr.op[1],0);            t = conditionlbl+1;
+            fprintf(yyout,"jmp L%03d\n", t); lblarr[lblindex++] = t; 
+            fprintf(yyout,"L%03d:\n", conditionlbl);
+            break;
+            */
             case while_loop:
             /*printf("L%03d:\n", lbl1 = lbl++);
-            ex(p->opr.op[0]);
-            printf("\tjz\tL%03d\n", lbl2 = lbl++);
-            ex(p->opr.op[1]);
-            printf("\tjmp\tL%03d\n", lbl1);
+            ex(p->opr.op[0],0);            printf("\tjz\tL%03d\n", lbl2 = lbl++);
+            ex(p->opr.op[1],0);            printf("\tjmp\tL%03d\n", lbl1);
             printf("L%03d:\n", lbl2);*/
 
-            /*Please check if this is right =)*/	
+            /*Please check if this is right =)*/    
             lbl1 = lbl++;
-            lbl2 = lbl++;
-            fprintf(yyout,"\tjmp\tL%03d\n", lbl1);
-            fprintf("L%03d:\n", lbl2);
-            ex(p->opr.op[1]);
+            whilelbl=lbl++;
+            fprintf(yyout,"whilelbl%d:\n", whilelbl);
+            ex(p->opr.op[0],0);            fprintf(yyout,"jmp L%03d:\n", lbl1);
+            fprintf(yyout,"L%03d:\n", conditionlbl);
+            ex(p->opr.op[1],0);            fprintf(yyout,"jmp whilelbl%d:\n", whilelbl);
             fprintf(yyout,"L%03d:\n", lbl1);
-            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
-            ex(p->opr.op[0]);
-            fprintf(yyout,"\tjz\tL%03d\n", lbl2);
+            //fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+            
+            //fprintf(yyout,"\tjz\tL%03d\n", lbl2);
             break;
 
 
 
             case do_statement:
-            fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[1]->registerNumber, p->opr.op[1]->con.value);
-            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
-            ex(p->opr.op[0]);
-            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
-            ex(p->opr.op[1]);
-            fprintf(yyout,"\tjz\tL%03d\n", lbl1);
+            //fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[1]->registerNumber, p->opr.op[1]->con.value);
+           
+            lbl1 = lbl++;
+            dowhilelbl=lbl++;
+            fprintf(yyout,"dowhilelbl%d:\n", dowhilelbl);
+            ex(p->opr.op[0],0); 
+            ex(p->opr.op[1],0);
+            fprintf(yyout,"jmp L%03d:\n", lbl1);
+            fprintf(yyout,"L%03d:\n", conditionlbl);
+            fprintf(yyout,"jmp dowhilelbl%d:\n", dowhilelbl);
+            fprintf(yyout,"L%03d:\n", lbl1);
+
+
+
+
             break;
 
-
-
             case for_loop:
-            fprintf(yyout,"xor R%03d \t , R%03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->registerNumber);
-            ex(p->opr.op[0]);
-            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
-            ex(p->opr.op[3]);
-            fprintf(yyout,"inc R%03d \t\n",p->opr.op[0]->registerNumber)
-            ex(p->opr.op[2]);
-            fprintf(yyout,"cmp R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
-            ex(p->opr.op[1]);
-            fprintf(yyout,"\tjle\tL%03d\n", lbl1);
+            //fprintf(yyout,"xor R%03d \t , R%03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->registerNumber);
+            ex(p->opr.op[0],0);  
+            //forlbl = lbl++; 
+            lbl2 = forcnt--;        
+            fprintf(yyout,"forlbl%d:\n",lbl2);
+            ex(p->opr.op[1],0);
+            fprintf(yyout,"jmp L%03d:\n", lbl1 = lbl++);
+            fprintf(yyout,"L%03d:\n", conditionlbl);
+             
+            ex(p->opr.op[3],0);
+            ex(p->opr.op[2],0); 
+            fprintf(yyout,"jmp forlbl%d:\n", lbl2);
+            fprintf(yyout,"L%03d:\n", lbl1);
+                        //fprintf(yyout,"inc R%03d \t\n",p->opr.op[0]->registerNumber);
+                      //fprintf(yyout,"cmp %s,%d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
+                        //fprintf(yyout,"\tjle\tL%03d\n", lbl1);
 
             /*Another logic I found:
             fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[0]->registerNumber, p->opr.op[0]->con.value);
-            ex(p->opr.op[0]);
-            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
-            ex(p->opr.op[3]);
-            fprintf(yyout,"loop L%03d:\n", lbl1);
-            ex(p->opr.op[2]);
-            ex(p->opr.op[1]);*/
+            ex(p->opr.op[0],0);            fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
+            ex(p->opr.op[3],0);            fprintf(yyout,"loop L%03d:\n", lbl1);
+            ex(p->opr.op[2],0);            ex(p->opr.op[1]);*/
             break;
 
 
@@ -557,97 +687,203 @@ void freeNode(nodeType *p) {
             if ((p->opr.op[0]->type == typeOpr || p->opr.op[1]->type == typeOpr ) && conditionFlag){
             	opr_flag = 1;
             }
-        	ex(p->opr.op[0]); ex(p->opr.op[1]);
-        	lastRegNum = p->registerNumber;
+                printf("test1.5\n");
+        	ex(p->opr.op[0],0); ex(p->opr.op[1],0);        	lastRegNum = p->registerNumber;
             lastOp1RegNum = p->opr.op[0]->registerNumber;
             lastOp2RegNum = p->opr.op[1]->registerNumber;
 
             switch(p->opr.oper) {
             case '+': 
+            printf("test2\n");
+             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                    if(types[computeSymbolIndex(p->opr.op[0]->id.id_name)] != types[computeSymbolIndex(p->opr.op[1]->id.id_name)]){  
+                        char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        char * type2 = malloc (50*sizeof(char));
+                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
+                        strcpy(msg,"type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and variable '");
+                        strcat(msg,p->opr.op[1]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type2);
+                        strcat(msg,")\n");
+                        yyerror(msg);
+                    }
+                }
             fprintf(yyout,"add R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
 			break;
-            case '-':  
+            case '-':
+             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                    if(types[computeSymbolIndex(p->opr.op[0]->id.id_name)] != types[computeSymbolIndex(p->opr.op[1]->id.id_name)]){  
+                        char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        char * type2 = malloc (50*sizeof(char));
+                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
+                        strcpy(msg,"type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and variable '");
+                        strcat(msg,p->opr.op[1]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type2);
+                        strcat(msg,")\n");
+                        yyerror(msg);
+                    }
+                }  
             fprintf(yyout,"sub R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
-            break;
 			case '*':
+             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                    if(types[computeSymbolIndex(p->opr.op[0]->id.id_name)] != types[computeSymbolIndex(p->opr.op[1]->id.id_name)]){  
+                        char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        char * type2 = malloc (50*sizeof(char));
+                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
+                        strcpy(msg,"type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and variable '");
+                        strcat(msg,p->opr.op[1]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type2);
+                        strcat(msg,")\n");
+                        yyerror(msg);
+                    }
+                }
 			fprintf(yyout,"mul R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
             break;
             case '/':
+             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                    if(types[computeSymbolIndex(p->opr.op[0]->id.id_name)] != types[computeSymbolIndex(p->opr.op[1]->id.id_name)]){  
+                        char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        char * type2 = malloc (50*sizeof(char));
+                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
+                        strcpy(msg,"type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and variable '");
+                        strcat(msg,p->opr.op[1]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type2);
+                        strcat(msg,")\n");
+                        yyerror(msg);
+                    }
+                }
             fprintf(yyout,"div R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);	
-            break;
+             break;
 
             case '<':   
+
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmp %s,%s\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"jb L%03d\n",conditionlbl = lbl++);
+                        conditionFlag = 0;
+                        id_flag = 0;
+                        
             			break;
             case '>':   
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmp %s,%s\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"ja L%03d\n",conditionlbl = lbl++);
+            			conditionFlag = 0;
+                        id_flag = 0;
             			break;
             case greater_or_equal_operator:   
             			if (p->opr.op[1]->type == typeCon){
-                        fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
+                        fprintf(yyout,"cmpGE R%d,%s,%d\n",p->registerNumber,symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmpGE R%d,%s,%s\n",p->registerNumber, symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
+                    	fprintf(yyout,"cmpGE R%d,%s,%d\n",p->registerNumber, symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
-            			fprintf(yyout,"jae L%03d\n",conditionlbl = lbl++);
+            			//fprintf(yyout,"jae L%03d\n",conditionlbl = lbl++);
+                        conditionFlag = 0;
+                        id_flag = 0;
             			break;
             case smaller_or_equal_operator:   
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmp %s,%s\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"jbe L%03d\n",conditionlbl = lbl++);
+                        conditionFlag = 0;
+                        id_flag = 0;
             			break;
             case not_equal_operator:    	  
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmp %s,%s\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"jnz L%03d\n",conditionlbl = lbl++);
+                        conditionFlag = 0;
+                        id_flag = 0;
             			break;
             case equals_operator:    		  
             			if (p->opr.op[1]->type == typeCon){
                         fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
                     	}
                     	else if (p->opr.op[1]->type == typeId){
-                    	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	fprintf(yyout,"cmp %s,%s\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
                     	}	
                     	else{
                     	fprintf(yyout,"cmp %s,%d\n",symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
                     	}
             			fprintf(yyout,"jz L%03d\n",conditionlbl = lbl++);
+                        conditionFlag = 0;
+                        id_flag = 0;
             			break;
+            case and_operator:
+            			/*if (p->opr.op[1]->type == typeCon){
+                        fprintf(yyout,"and R%d,%s,%d\n",p->registerNumber,symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
+                    	}
+                    	else if (p->opr.op[1]->type == typeId){
+                    	fprintf(yyout,"and R%d,%s,%s\n",p->registerNumber, symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
+                    	}	
+                    	else{
+                    		*/
+                    	fprintf(yyout,"and R%d,R%d,R%d\n",p->registerNumber, p->opr.op[0]->registerNumber,p->opr.op[1]->registerNumber/*symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)]*//*lastRegNum*/);
+                    	conditionFlag = 0;
+                        id_flag = 0;
+
+ 						//           			fprintf(yyout,"jz L%03d\n",conditionlbl = lbl++);
+            			break;
+            
         }
         break;
     }

@@ -1,8 +1,10 @@
 typedef enum { typeCon, typeId, typeOpr } nodeEnum;
-
+typedef enum { integer_num, float_num } typeEnum;
 /* constants */
 typedef struct {
     int value;                  /* value of constant */
+    typeEnum type;
+    float fvalue;
     int registerNumber;         /* register number */
 } conNodeType;
 
@@ -13,6 +15,8 @@ typedef struct {
 
 } idNodeType;
 
+
+ 
 /* operators */
 typedef struct {
     int oper;                   /* operator */
