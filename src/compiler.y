@@ -5,12 +5,15 @@
     #include <stdlib.h>
     #include <stdarg.h>
     #include "compiler.h"
-    #include <gtk/gtk.h>
     void yyerror(const char *msg);
     extern int yylex();
     extern int yylineno;
     extern char* yytext;
-    static void destroy(GtkWidget*,gpointer);
+    FILE * errors;
+    FILE * symbol_file;
+    void destroy();
+    int progress_timeout();
+    void progress();
     int syntax_flag = 0;
     nodeType *opr(int oper , int nops, ...);
     nodeType *id(char* id_name);
@@ -122,6 +125,8 @@ struct stack {
 %token or_operator
 %token not_operator
 %token return_command
+%token repeat
+%token until
 %type <nPtr> line expr term line_list 
 %type <nPtr> assignment declaration  casestmt case_list   arg_list_header
 %type <id> return_type id_list fn_declaration 
@@ -139,8 +144,8 @@ function:   function line                       {  ex($2,0);  freeNode($2);}
 |
 ;
 
-line :';'                               {;}
-     | declaration ';'                  {$$->declarationFlag = 1;}
+line : //';'                               {;}
+        declaration ';'                  {$$->declarationFlag = 1;}
      |  assignment ';'                  {;}
      |  expr ';'                     {; conditionFlag=0;}
      |  cout_command left_shift expr ';'            { $$ = opr(cout_command,1,$3);}
@@ -148,8 +153,8 @@ line :';'                               {;}
      |  if_statement '(' expr ')' left_par line_list right_par else_statement left_par line_list right_par {$$ = opr(if_statement,3,$3,$6,$10); conditionFlag = 0; }
      |  switch_statement '(' identifier ')' left_par case_list   default_command ':' line_list  break_command ';'right_par        {  check_variable_level($3);  switchcnt++; $$ = opr(switch_statement,3,id($3),$6,$9); used[computeSymbolIndex($3)] = 1;}
      |  while_loop '(' expr ')' left_par line_list right_par     { $$ = opr(while_loop, 2, $3, $6); logex_flag = 1; conditionFlag = 0; }
-     |  do_statement left_par line_list right_par while_loop '(' expr ')' ';' { $$ = opr(do_statement, 2, $3, $7); logex_flag = 1; conditionFlag = 0;  }
-     |  for_loop '(' assignment ';' expr ';' assignment ')' left_par line_list right_par { forcnt++; $$ = opr(for_loop, 4, $3, $5, $7, $10); logex_flag = 1; conditionFlag = 0; }
+     |  repeat left_par line_list right_par until '(' expr ')' ';' { $$ = opr(repeat, 2, $3, $7); logex_flag = 1; conditionFlag = 0;  }
+     |  for_loop '(' assignment ';' expr ';' expr ')' left_par line_list right_par { forcnt++; $$ = opr(for_loop, 4, $3, $5, $7, $10); logex_flag = 1; conditionFlag = 0; }
      |  fn_declaration '(' arg_list_header ')' left_par line_list right_par                    {$$=opr(return_command,3,id($1),$3,$6); fnflag = 1;conditionFlag=0; }
      |  fn_declaration '(' ')' left_par line_list right_par                    {$$=opr(return_command,2,id($1),$5); fnflag = 1;conditionFlag=0; }
      |  identifier '(' id_list ')'   ';'                  {updateFunction($1); $$ = opr(break_command,2,id($1),id($3));conditionFlag=0;}
@@ -235,11 +240,12 @@ assignment :  identifier '=' expr       {if (cons[computeSymbolIndex($1)]){
 	strcat(msg,$1);
 	strcat(msg,"' cannot be modified");
 	yyerror(msg);} $$ = opr('=',2,id($1),$3);  init[computeSymbolIndex($1)] = 1; if (!syntax_flag){declaredCheck($1);}  used[computeSymbolIndex($1)] = 1; check_variable_level($1); }
-           |  declaration '=' expr      { $$ = opr('=',2,$1,$3); $1->declarationFlag = 1; init[computeSymbolIndex($1->id.id_name)] = 1; check_variable_level($1->id.id_name); }
+           |  declaration '=' expr      { $$ = opr('=',2,$1,$3); $1->declarationFlag = 1; init[computeSymbolIndex($1->id.id_name)] = 1; used[computeSymbolIndex($1->id.id_name)] = 1; check_variable_level($1->id.id_name); }
          //  | identifier '=' logex       {$$ = opr('=',2,id($1),$3); }
 ;
 
 expr :  term        {$$=$1; $$->declarationFlag = 0;}
+	| '-' expr %prec uminus	 {$$ = opr(uminus,1,$2);}
     |   expr '+' expr   {$$ = opr('+',2,$1,$3); }
     |   expr '-' expr   {$$ = opr('-',2,$1,$3); }
     |   expr '*' expr   {$$ = opr('*',2,$1,$3); }
@@ -268,7 +274,7 @@ term :  integer         {equal_flag = 1; $$ = con($1);   $$->con.type = integer_
 
 %%  
 /*void yyerror (char *s){
-    fprintf(stderr,"\n%s at line number: %d \n",s,yylineno);
+    fprintf(errors,"\n%s at line number: %d \n",s,yylineno);
 }
 */
 
@@ -310,10 +316,11 @@ int pop() {
    return (item);
 }
 
-
+/*
 GtkWidget *window;
-
-static void choose_file(GtkWidget* app, gpointer user_data){
+GtkWidget *progressbar1,*button1,*button2,*button3,*button4,*label1,*label2,*label3,*label4,*grid;
+/*
+void choose_file(GtkWidget* app, gpointer user_data){
 	GtkWidget *dialog;
 GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_OPEN;
 gint res;
@@ -342,76 +349,248 @@ if (res == GTK_RESPONSE_ACCEPT)
  gtk_widget_destroy (dialog);
 
 }
+
+void save_file(GtkWidget* app, gpointer user_data){
+	GtkWidget *dialog;
+GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_SAVE;
+gint res;
+GtkWindow *parent_window = GTK_WINDOW(window);
+dialog = gtk_file_chooser_dialog_new ("Save Output Quadruples",
+                                       parent_window,
+                                      action,
+                                      "Cancel",
+                                      GTK_RESPONSE_CANCEL,
+                                      "Save",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+
+res = gtk_dialog_run (GTK_DIALOG (dialog));
+if (res == GTK_RESPONSE_ACCEPT)
+  {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER (dialog);
+    filename = gtk_file_chooser_get_filename (chooser);
+    printf("%s\n",filename);
+    yyout = fopen(filename,"w");
+   // open (filename);
+    //g_free (filename);
+  }
+
+ gtk_widget_destroy (dialog);
+
+}
+*/
+/*
+void choose_file(){
+	GtkWidget *dialog;
+GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_OPEN;
+gint res;
+GtkWindow *parent_window = GTK_WINDOW(window);
+dialog = gtk_file_chooser_dialog_new ("Open File",
+                                       parent_window,
+                                      action,
+                                      "Cancel",
+                                      GTK_RESPONSE_CANCEL,
+                                      "Open",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+
+res = gtk_dialog_run (GTK_DIALOG (dialog));
+if (res == GTK_RESPONSE_ACCEPT)
+  {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER (dialog);
+    filename = gtk_file_chooser_get_filename (chooser);
+    printf("%s\n",filename);
+    yyin = fopen(filename,"r");
+   // yyout = fopen("output.quad","w");
+   // open (filename);
+    //g_free (filename);
+  }
+
+ gtk_widget_destroy (dialog);
+
+}
+
+void save_file(){
+	GtkWidget *dialog;
+GtkFileChooserAction action = GTK_FILE_CHOOSER_ACTION_SAVE;
+gint res;
+GtkWindow *parent_window = GTK_WINDOW(window);
+dialog = gtk_file_chooser_dialog_new ("Save Output Quadruples",
+                                       parent_window,
+                                      action,
+                                      "Cancel",
+                                      GTK_RESPONSE_CANCEL,
+                                      "Save",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+
+res = gtk_dialog_run (GTK_DIALOG (dialog));
+if (res == GTK_RESPONSE_ACCEPT)
+  {
+    GtkFileChooser *chooser = GTK_FILE_CHOOSER (dialog);
+    filename = gtk_file_chooser_get_filename (chooser);
+    printf("%s\n",filename);
+    yyout = fopen(filename,"w");
+   // open (filename);
+    //g_free (filename);
+  }
+
+ gtk_widget_destroy (dialog);
+
+}
+
+ 
+
 static gboolean killOffApp (gpointer userData) {
     g_application_quit (userData); // << and here  
     //gtk_widget_hide (window);
     return FALSE;
 }
-static void activate (){
+/*static void activate (){
 	
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title (GTK_WINDOW (window), "Yet Another Compiler Compiler");
   gtk_window_set_default_size (GTK_WINDOW (window), 200, 200);
   g_signal_connect (window, "destroy", G_CALLBACK (destroy), window);
-  GtkWidget *button1,*button2,*button_box1,*label;
-
-
  
 
+table = gtk_grid_new();
+  gtk_container_add (GTK_CONTAINER (window), table);
 
 
-  button_box1 = gtk_button_box_new (GTK_ORIENTATION_HORIZONTAL);
-  gtk_container_add (GTK_CONTAINER (window), button_box1);
+
 
   label = gtk_label_new("Browse source code file: ");
-    gtk_container_add (GTK_CONTAINER (button_box1), label);
+    gtk_grid_attach (GTK_GRID(table), label,0,0,2,1);
 
    button1 = gtk_button_new_with_label ("Browse");
   g_signal_connect (button1, "clicked", G_CALLBACK (choose_file), NULL);
   //g_signal_connect_swapped (button, "clicked", G_CALLBACK (gtk_widget_destroy), window);
-  gtk_container_add (GTK_CONTAINER (button_box1), button1);
+  //gtk_container_add (GTK_CONTAINER (table), button1);
+gtk_grid_attach (GTK_GRID(table), button1,6,0,1,1);
 
 
-  button2 = gtk_button_new_with_label ("Compile");
-  g_signal_connect_swapped(button2, "clicked", G_CALLBACK (gtk_widget_destroy), (gpointer) window);
+  label2 = gtk_label_new("Save output quadruples as: ");
+    gtk_grid_attach (GTK_GRID (table), label2,0,4,2,1);
+
+
+  button2 = gtk_button_new_with_label ("Save As");
+  g_signal_connect_swapped(button2, "clicked", G_CALLBACK (save_file), (gpointer) window);
   //g_signal_connect_swapped (button, "clicked", G_CALLBACK (gtk_widget_destroy), window);
-  gtk_container_add (GTK_CONTAINER (button_box1), button2);
+  gtk_grid_attach (GTK_GRID(table), button2,6,4,1,1);
+
+  label3 = gtk_label_new("Click to compile: ");
+    gtk_grid_attach (GTK_GRID (table), label3,0,8,2,1);
+
+  button3 = gtk_button_new_with_label ("Compile");
+  g_signal_connect_swapped(button3, "clicked", G_CALLBACK (gtk_widget_destroy), (gpointer) window);
+  //g_signal_connect_swapped (button, "clicked", G_CALLBACK (gtk_widget_destroy), window);
+ gtk_grid_attach (GTK_GRID (table), button3,6,8,1,1);
 
 
   gtk_widget_show_all (window);
 
 }
-static void destroy(GtkWidget* window,gpointer data){
+*/
+/*
+ void destroy(){
 		gtk_main_quit();
 }
 
 
+	GtkWidget	*widget;
+*/
+int main(int argc,char *argv[]){
+	/*
+	GtkBuilder      *builder; 
+	GtkWidget *button1,*button2,*button3,*button4,*label1,*label2,*label3,*label4,*grid;
 
-int main(void){
+ int status;
+  gtk_init(0,NULL);
+
+	builder = gtk_builder_new();
+    gtk_builder_add_from_file (builder, "/home/youssef/Desktop/CompilerGUI.glade", NULL);
+    window = GTK_WIDGET(gtk_builder_get_object(builder, "window1"));
+    gtk_builder_connect_signals(builder, NULL);
+ 	button1 = GTK_WIDGET(gtk_builder_get_object(builder, "button1"));
+    button2 = GTK_WIDGET(gtk_builder_get_object(builder, "button2"));
+ 	button3 = GTK_WIDGET(gtk_builder_get_object(builder, "button3"));
+ 	button4 = GTK_WIDGET(gtk_builder_get_object(builder, "button4"));
+ 	label1 = GTK_WIDGET(gtk_builder_get_object(builder, "label1"));
+    label2 = GTK_WIDGET(gtk_builder_get_object(builder, "label2"));
+ 	label3 = GTK_WIDGET(gtk_builder_get_object(builder, "label3"));
+ 	label4 = GTK_WIDGET(gtk_builder_get_object(builder, "label4"));
+ 	grid = GTK_WIDGET(gtk_builder_get_object(builder, "grid1"));
+ 	
+    g_object_unref(G_OBJECT(builder));
+*/
+	/*
+	printf("mono thread attach\n");
+	mono_thread_attach(domain);
+	printf("mono domain assembly open\n");
+	assembly = mono_domain_assembly_open(domain, "/home/youssef/Documents/test/test/bin/test.exe");
+	if (!assembly) printf("FAIL\n");
+	printf("mono jit exec\n");
+	mono_jit_exec(domain,assembly,argc-1,argv+1);
+	printf("mono assembly get image\n");
+	image = mono_assembly_get_image(assembly);
+	if (!image) printf("FAIL\n");
+	printf("mono class from name\n");
+	monoclass = mono_class_from_name (image, "MonoTestSpace", "MonoTest");
+	if (!monoclass) printf("FAIL\n");
+	printf("get method\n");
+	iter = NULL;
+	while ((m = mono_class_get_methods (monoclass, &iter)))
+		if (strcmp (mono_method_get_name (m), "Test") == 0)
+			method = m;		
+	if (!method) printf("FAIL\n");
+
+	printf("mono object new\n");
+	obj = mono_object_new(domain,monoclass);
+	if (!obj) printf("FAIL\n");
+	printf("mono runtime object init\n");
+	mono_runtime_object_init(obj);
+	gpointer args[1];
+	widget = gtk_frame_new(0);
+	args[0] = &widget; 	
+	printf("mono runtime invoke\n");
+	mono_runtime_invoke(method,obj,args,NULL);
+*/
+
+
     symbol_init();
   /* filename = malloc(20*sizeof(char));
    printf("Please enter source file name: ");
    scanf("%s",filename);
    */
-   GtkApplication *app;
-  int status;
-  gtk_init(0,NULL);
-  activate();
+//   GtkApplication *app;
+   //activate();
+  /*  gtk_widget_show(window);
   gtk_main();
-   yyparse(); 
+*/
+		
+	yyin = fopen(argv[1],"r");
+	yyout = fopen(argv[2],"w"); 
+  errors = fopen("errors.txt","w");
+  symbol_file = fopen("symbols.txt","w");
+	filename  = argv[1];
+   yyparse();
+    
    fclose(yyin);
    fclose(yyout);
    return 0;
 }
 void yyerror(const char *msg){
-    fprintf(stderr,"%s:%d: %s\n",filename,yylineno,msg);
+    fprintf(errors,"%s:%d: %s\n",filename,yylineno,msg);
 }
 
 void printSymbolTable(){
     int i;
-    printf("symbols: ");
+    fprintf(symbol_file,"symbol:\ttype:\n");
     for (i = 0;i<10;i++){
-        printf("%s ",symbols[i]);
+        if (strcmp(symbols[i],"\0")){
+        fprintf(symbol_file,"%s\t%s\n",symbols[i],types[computeSymbolIndex(symbols[i])]);
+      }
     }
     printf("\n");
     printf("levels: ");
@@ -436,8 +615,8 @@ void symbol_init(){
 }
 
 int check_variable_level(char* symbol){
-	if (levels[computeSymbolIndex(symbol)] > st.top){
-		printf("top = %d\n",st.top); 	
+	if (levels[computeSymbolIndex(symbol)] > st.s[st.top]){
+		display(); printf("top = %d\n",st.top); 	
 		char * msg = malloc (300*sizeof(char));
 		strcpy(msg,"variable '");
 		strcat(msg,symbol);
@@ -787,7 +966,7 @@ void freeNode(nodeType *p) {
         case '=':
                 id_flag = 1;
                         //printf("test1.3\n");
-                if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
+                if (p->opr.op[1]->type == typeId){
                     if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],types[computeSymbolIndex(p->opr.op[1]->id.id_name)])){  
                         char * msg = malloc (300*sizeof(char));
                         char * type1 = malloc (50*sizeof(char));
@@ -805,6 +984,36 @@ void freeNode(nodeType *p) {
                         strcat(msg,")\n");
                         yyerror(msg);
                     }
+                }
+                else if (p->opr.op[1]->type == typeCon ){
+                	if( p->opr.op[1]->con.type == float_num){
+                		if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],"float")){
+                			char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        strcpy(msg,"warning: type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and float value.");
+                        yyerror(msg);
+                		}
+                	}
+                	else if ( p->opr.op[1]->con.type == integer_num){
+                		if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],"int")){
+                			char * msg = malloc (300*sizeof(char));
+                        char * type1 = malloc (50*sizeof(char));
+                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
+                        
+                        strcpy(msg,"warning: type conflict between variable '"); 
+                        strcat(msg,p->opr.op[0]->id.id_name);
+                        strcat(msg,"' of type (");
+                        strcat(msg,type1);
+                        strcat(msg,") and integer value.");
+                        yyerror(msg);
+                		}
+                	}
+                	
                 }
 
                 ex(p->opr.op[0],label);
@@ -831,7 +1040,7 @@ void freeNode(nodeType *p) {
               break;
 
         case uminus:    
-            ex(p->opr.op[0],label);            fprintf(yyout,"\tneg\n");
+            ex(p->opr.op[0],label);            fprintf(yyout,"neg R%d,R%d\n",p->registerNumber,p->opr.op[0]->registerNumber);
             break;
             case if_statement:
             ex(p->opr.op[0],label);
@@ -886,7 +1095,7 @@ void freeNode(nodeType *p) {
             case case_statement:
             conditionFlag = 1;
             //printf("case statement no. %d\n",switchcnt);
-           // fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
+            // fprintf(yyout,"L%03d:\n", lbl1 = lbl++);
             ex(p->opr.op[0],label);           // fprintf(yyout,"L%03d:\n", lastlbl); 
             fprintf(yyout,"cmp %s,%d\n",switch_var,(p->opr.op[0])->con.value);
             
@@ -943,7 +1152,7 @@ void freeNode(nodeType *p) {
 
 
 
-            case do_statement:
+            case repeat:
             //fprintf(yyout,"mov R%03d \t , %03d\n",p->opr.op[1]->registerNumber, p->opr.op[1]->con.value);
            
             lbl1 = lbl++;
@@ -1036,92 +1245,17 @@ void freeNode(nodeType *p) {
                 fprintf(yyout,"mov %s,R%d\n",(p->opr.op[0])->id.id_name, p->registerNumber /*p->id.id_name*/);
             break;
             case '+': 
-           // printf("test2\n");
-             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
-                    if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],types[computeSymbolIndex(p->opr.op[1]->id.id_name)])){  
-                        char * msg = malloc (300*sizeof(char));
-                        char * type1 = malloc (50*sizeof(char));
-                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
-                        char * type2 = malloc (50*sizeof(char));
-                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
-                        strcpy(msg,"warning: type conflict between variable '"); 
-                        strcat(msg,p->opr.op[0]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type1);
-                        strcat(msg,") and variable '");
-                        strcat(msg,p->opr.op[1]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type2);
-                        strcat(msg,")\n");
-                        yyerror(msg);
-                    }
-                }
             fprintf(yyout,"add R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
             break;
             case '-':
-             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
-                    if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],types[computeSymbolIndex(p->opr.op[1]->id.id_name)])){  
-                        char * msg = malloc (300*sizeof(char));
-                        char * type1 = malloc (50*sizeof(char));
-                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
-                        char * type2 = malloc (50*sizeof(char));
-                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
-                        strcpy(msg,"warning: type conflict between variable '"); 
-                        strcat(msg,p->opr.op[0]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type1);
-                        strcat(msg,") and variable '");
-                        strcat(msg,p->opr.op[1]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type2);
-                        strcat(msg,")\n");
-                        yyerror(msg);
-                    }
-                }  
             fprintf(yyout,"sub R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
             break;
             case '*':
-             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
-                    if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],types[computeSymbolIndex(p->opr.op[1]->id.id_name)])){  
-                        char * msg = malloc (300*sizeof(char));
-                        char * type1 = malloc (50*sizeof(char));
-                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
-                        char * type2 = malloc (50*sizeof(char));
-                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
-                        strcpy(msg,"warning: type conflict between variable '"); 
-                        strcat(msg,p->opr.op[0]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type1);
-                        strcat(msg,") and variable '");
-                        strcat(msg,p->opr.op[1]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type2);
-                        strcat(msg,")\n");
-                        yyerror(msg);
-                    }
-                }
+           
             fprintf(yyout,"mul R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber);
             break;
             case '/':
-             if (p->opr.op[0]->type == typeId && p->opr.op[1]->type == typeId){
-                    if(strcmp(types[computeSymbolIndex(p->opr.op[0]->id.id_name)],types[computeSymbolIndex(p->opr.op[1]->id.id_name)])){  
-                        char * msg = malloc (300*sizeof(char));
-                        char * type1 = malloc (50*sizeof(char));
-                        strcpy(type1,getType(p->opr.op[0]->id.id_name));
-                        char * type2 = malloc (50*sizeof(char));
-                        strcpy(type2,getType(p->opr.op[1]->id.id_name));
-                        strcpy(msg,"warning: type conflict between variable '"); 
-                        strcat(msg,p->opr.op[0]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type1);
-                        strcat(msg,") and variable '");
-                        strcat(msg,p->opr.op[1]->id.id_name);
-                        strcat(msg,"' of type (");
-                        strcat(msg,type2);
-                        strcat(msg,")\n");
-                        yyerror(msg);
-                    }
-                }
+         
             fprintf(yyout,"div R%d,R%d,R%d\n",p->registerNumber,(p->opr.op[0])->registerNumber,(p->opr.op[1])->registerNumber); 
              break;
 
@@ -1138,19 +1272,8 @@ void freeNode(nodeType *p) {
                         id_flag = 0;
                         break;
             case greater_or_equal_operator:   
-                       /* if (p->opr.op[1]->type == typeCon){
-                        fprintf(yyout,"cmpGE R%d,%s,%d\n",p->registerNumber,symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->con.value);
-                        }
-                        else if (p->opr.op[1]->type == typeId){
-                        fprintf(yyout,"cmpGE R%d,%s,%s\n",p->registerNumber, symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],p->opr.op[1]->id.id_name);
-                        }   
-                        else{
-                        fprintf(yyout,"cmpGE R%d,%s,%d\n",p->registerNumber, symbols[computeSymbolIndex(p->opr.op[0]->id.id_name)],lastRegNum);
-                        }*/
-                        //fprintf(yyout,"mov R%d,%s\n",(p->opr.op[0])->registerNumber,(p->opr.op[0])->id.id_name);
-                        //fprintf(yyout,"mov R%d,%s\n",(p->opr.op[1])->registerNumber,(p->opr.op[1])->id.id_name);
+                       
                         fprintf(yyout,"cmpGE R%d,R%d,R%d\n",p->registerNumber, p->opr.op[0]->registerNumber,p->opr.op[1]->registerNumber);
-                        //fprintf(yyout,"jae L%03d\n",conditionlbl = lbl++);
                         conditionFlag = 0;
                         id_flag = 0;
                         break;
